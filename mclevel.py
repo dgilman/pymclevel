@@ -1342,8 +1342,9 @@ class InfdevChunk(MCLevel):
         self.world.chunkDidCompress(self);
     
     def decompress(self):
-        MCLevel.decompress(self);
-        self.world.chunkDidDecompress(self);
+        if not self in self.world.decompressedChunks:
+            MCLevel.decompress(self);
+            self.world.decompressedChunks.add(self);
         
         
     def __str__(self):
@@ -1637,7 +1638,7 @@ class MCInfdevOldLevel(MCLevel):
         self._presentChunks = {};
         
         self.loadedChunks = deque()
-        self.decompressedChunks = deque()
+        self.decompressedChunks = set()
         
         if create:
             
@@ -1750,22 +1751,22 @@ class MCInfdevOldLevel(MCLevel):
         if not (x,z) in self._presentChunks: return; #not an error
         self._presentChunks[x,z].compress()
     
-    decompressedChunkLimit = 2048 # about 320 megabytes
+    decompressedChunkLimit = 204800 # about 320 megabytes
     compressedChunkLimit = 8192 # from 8mb to 800mb depending on chunk contents
             
     
     def chunkDidCompress(self, chunk):
-        # searching decompressedChunks every time is slow, especially with the above limits
+         #searching decompressedChunks every time is slow, especially with the above limits
         try:
             self.decompressedChunks.remove(chunk)
-        except ValueError:
+        except KeyError:
             pass
     
     def chunkDidDecompress(self, chunk):
         if not chunk in self.decompressedChunks:
-            self.decompressedChunks.append(chunk);
+            self.decompressedChunks.add(chunk);
             if len(self.decompressedChunks) > self.decompressedChunkLimit:
-                oldestChunk = self.decompressedChunks[0];
+                oldestChunk = self.decompressedChunks.pop();
                 oldestChunk.compress(); #calls chunkDidCompress
     
     def chunkDidUnload(self, chunk):
