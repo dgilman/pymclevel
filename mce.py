@@ -836,6 +836,7 @@ class mce(object):
      ).lower() in ("yes", "y", "1", "true"):
             from PIL import Image
             import datetime
+            import threading, Queue
 
             filename = command.pop(0)
 
@@ -856,21 +857,39 @@ class mce(object):
             ychunks = height/16 if (height % 16 == 0) else (height/16) + 1
             xchunks = width/16 if (width % 16 == 0) else (width/16) + 1
 
+            work_queue = Queue.Queue()
+
             start = datetime.datetime.now()
-            for cx in range(xchunks):
-                for cy in range(ychunks):
-                    try:
-                        self.level.createChunk(cx,cy)
-                    except:
-                        pass
-                    c = self.level.getChunk(cx,cy)
+            def populate_chunk():
+                while True:
+                    cx,cy = work_queue.get()
+                    c = self.level.getChunk(cx,cy) #hopefully not needed
                     for i in range(16):
                         for j in range(16):
                             if i+(cx*16) < width-1 and j+(cy*16) < height-1:
                                 for z in range(png[i+(cx*16),j+(cy*16)][0]):
                                     c.Blocks[i,j,z] = 3 #dirt
                     c.chunkChanged()
+                    work_queue.task_done()
                     print "%s Just did chunk %d,%d" % (datetime.datetime.now().strftime("[%H:%M:%S]"),cx,cy)
+                    if work_queue.empty():
+                       return
+
+            for cx in xrange(xchunks):
+                for cy in xrange(ychunks):
+                    try:
+                        self.level.createChunk(cx,cy)
+                    except:
+                        pass
+                    c = self.level.getChunk(cx,cy)
+                    work_queue.put((cx,cy))
+
+            for foo in [1,2]:
+                threading.Thread(target=populate_chunk).start()
+            
+            sys.setcheckinterval(10000)
+            work_queue.join()
+            sys.setcheckinterval(100)
 
             print "Done with mapping!"
             self.level.generateLights()
