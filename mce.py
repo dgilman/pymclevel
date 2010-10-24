@@ -892,8 +892,6 @@ class mce(object):
             sys.setcheckinterval(100)
 
             print "Done with mapping!"
-            self.level.generateLights()
-            print "Done with lights!"
             self.needsSave = True;
             stop = datetime.datetime.now()
             print "Took %s." % str(stop-start)
