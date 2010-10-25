@@ -884,7 +884,7 @@ class mce(object):
                     c = self.level.getChunk(cx,cy)
                     work_queue.put((cx,cy))
 
-            for foo in multiprocessing.cpu_count():
+            for foo in range(1,multiprocessing.cpu_count()):
                 threading.Thread(target=populate_chunk).start()
             
             sys.setcheckinterval(10000)
