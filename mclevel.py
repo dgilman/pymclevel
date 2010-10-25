@@ -321,13 +321,39 @@ class MCLevel(object):
     Width = None
     
     players = ["Player"]
-    
-    def getWorldBounds(self):
-        return BoundingBox( (0,0,0), self.getSize() )
+    @classmethod
+    def isLevel(cls, filename):
+        """Tries to find out whether the given filename can be loaded
+        by this class.  Returns True or False.
         
-    def getSize(self):
+        Subclasses should implement _isLevel, _isDataLevel, or _isTagLevel.
+        """ 
+        if hasattr(cls, "_isLevel"):
+            return cls._isLevel(filename);
+        
+        with file(filename) as f:
+            data = f.read();
+        
+        if hasattr(cls, "_isDataLevel"):
+            return cls._isDataLevel(data);
+        
+        if hasattr(cls, "_isTagLevel"):
+            try:
+                root_tag = nbt.load(filename, data)
+            except:
+                return False;
+            
+            return cls._isTagLevel(root_tag);
+        
+        return False
+            
+    def getWorldBounds(self):
+        return BoundingBox( (0,0,0), self.size )
+   
+    @property     
+    def size(self):
+        "Returns the level's dimensions as a tuple (X,Y,Z)"
         return (self.Width, self.Height, self.Length)
-    size = property(getSize, None, None, "Returns the level's dimensions as a tuple (X,Y,Z)")
     
     def compressedSize(self):
         "return the size of the compressed data for this level, in bytes."
@@ -622,42 +648,42 @@ class MCLevel(object):
     @classmethod
     def fromFile(cls, filename, loadInfinite=True):
         ''' The preferred method for loading Minecraft levels of any type.
-        pass False to loadInfinite if you'd rather not load infdev levels.'''
+        pass False to loadInfinite if you'd rather not load infdev levels.
+        '''
         info( u"Identifying " + filename )
         
         if not filename:
             raise IOError, "File not found: "+filename
         if not os.path.exists(filename):
             raise IOError, "File not found: "+filename
-        try:
-            f = file(filename,'rb');
-        except IOError, e:
-            #directory, maybe?
-            if not loadInfinite:
-                raise;
-            try:
-                info( u"Can't read, attempting to open directory" )
-                lev = MCInfdevOldLevel(filename=filename)
-                info( u"Detected Alpha world." )
-                return lev;
-            except Exception, ex:
-                warn( u"Couldn't understand this file: {0} ".format(ex) )
-                raise; 
+        
+        if (MCInfdevOldLevel._isLevel(filename)):
+            info( u"Detected Infdev level.dat" )
+            if (loadInfinite):
+                return MCInfdevOldLevel(filename=filename);
+            else:
+                raise ValueError, "Asked to load {0} which is an infinite level, loadInfinite was False".format(os.path.basename(filename));
+        
+        if os.path.isdir(filename):
+            raise ValueError, "Folder {0} was not identified as a Minecraft level.".format(os.path.basename(filename));
+            
+        f = file(filename, 'rb');
         rawdata = f.read()
         f.close()
         if len(rawdata) < 4:
-            raise ValueError, "File is too small!  " + filename
+            raise ValueError, "{0} is too small! ({1}) ".format(filename, len(rawdata))
+            
+            
+        
         
         data = fromstring(rawdata, dtype='uint8')
-        isJavaLevel = lambda data: (
-            data[0] == 0x27 and
-            data[1] == 0x1B and
-            data[2] == 0xb7 and
-            data[3] == 0x88)
+        if not data.any():
+            raise ValueError, "{0} contains only zeroes. This file is damaged beyond repair."
         
-        if isJavaLevel(data):
+        
+        if MCJavaLevel._isDataLevel(data):
             info( u"Detected Java-style level" )
-            lev = MCJavaLevel(data, filename);
+            lev = MCJavaLevel(filename, data);
             lev.compressed = False;
             return lev;
 
@@ -671,46 +697,38 @@ class MCLevel(object):
             if unzippedData is None:
                 compressed = False;
                 unzippedData = rawdata
-        #if(ungzdata): data=ungzdata
         
         data = fromstring(unzippedData, dtype='uint8')
         
-        if isJavaLevel(data):
+        if MCJavaLevel._isDataLevel(data):
             info( u"Detected compressed Java-style level" )
-            lev = MCJavaLevel(data, filename);
+            lev = MCJavaLevel(filename, data);
             lev.compressed = compressed;
             return lev;
 
         try:
             root_tag = nbt.load(buf=data);
-        except IOError, e:
-            #it must be a plain array of blocks. see if MCJavaLevel handles it.
-            info( u"Detected compressed flat block array, yzx ordered (IOError: {0})".format(e) )
-            lev = MCJavaLevel(data, filename);
+        except:
+            info( u"Fallback: Detected compressed flat block array, yzx ordered " )
+            lev = MCJavaLevel(filename, data);
             lev.compressed = compressed;
             return lev;
-
+            
         else:
-            if(root_tag.name == MinecraftLevel):
+            if(MCIndevLevel._isTagLevel(root_tag)):
                 info( u"Detected Indev .mclevel" )
                 return MCIndevLevel(root_tag, filename)
-            if(root_tag.name == "Schematic"):
+            if(MCSchematic._isTagLevel(root_tag)):
                 info( u"Detected Schematic." )
                 return MCSchematic(root_tag=root_tag, filename=filename)
             
-            if(root_tag.name == ''):
-                if ("Inventory" in root_tag):
-                    info( u"Detected INVEdit inventory file" )
-                    return INVEditChest(root_tag=root_tag, filename=filename);
-                    
-                if ("Data" in root_tag):
-                    info( u"Detected Infdev level.dat" )
-                    if (loadInfinite):
-                    
-                        return MCInfdevOldLevel(filename=filename);
-                    else:
-                        raise IOError, "Cannot import infinite levels"
-                    
+            if (INVEditChest._isTagLevel(root_tag)):
+                info( u"Detected INVEdit inventory file" )
+                return INVEditChest(root_tag=root_tag, filename=filename);
+                
+            
+        #it must be a plain array of blocks. see if MCJavaLevel handles it.
+        
         raise IOError, "Cannot detect file type."
     
     def setPlayerPosition(self, pos, player = "Player"):
@@ -1028,6 +1046,11 @@ class MCSchematic (MCLevel):
         return self.root_tag[TileEntities]
     TileEntities = property(getTileEntities);
     
+    @classmethod
+    def _isTagLevel(cls, root_tag):
+        return "Schematic" == root_tag.name
+        
+            
     def __init__(self, shape = None, root_tag = None, filename = None, mats = 'Alpha'):
         """ shape is (x,y,z) for a new level's shape.  if none, takes
         root_tag as a TAG_Compound for an existing schematic file.  if
@@ -1253,7 +1276,10 @@ class INVEditChest(MCSchematic):
     Data = array([[[0]]], 'uint8');
     Entities = TAG_List();
     
-        
+    @classmethod
+    def _isTagLevel(cls, root_tag):
+        return "Inventory" in root_tag;
+                
     def __init__(self, root_tag, filename):
         
         if filename:
@@ -1598,10 +1624,46 @@ def generateHeightMap(self):
     heightMap[axes[1],axes[0]] = axes[2]; #assumes the y-indices come out in increasing order
     heightMap += 1;
 
+        
+class dequeset(object):
+    def __init__(self):
+        self.deque = deque();
+        self.set = set();
+        
+    def __contains__(self, obj):
+        return obj in self.set;
+    
+    def __len__(self):
+        return len(self.set);
+        
+    def append(self, obj):
+        self.deque.append(obj);
+        self.set.add(obj);
+    
+    def discard(self, obj):
+        if obj in self.set:
+            self.deque.remove(obj);
+        self.set.discard(obj);
+        
+        
+    def __getitem__(self, idx):
+        return self.deque[idx];
+        
 class MCInfdevOldLevel(MCLevel):
     materials = materials;
     hasEntities = True;
     
+    @classmethod
+    def _isLevel(cls, filename):
+        if os.path.isdir(filename):
+            files = os.listdir(filename);
+            if "level.dat" in files or "level.dat_old" in files:
+                return True;
+        elif os.path.basename(filename) in ("level.dat", "level.dat_old"):
+            return True;
+            
+        return False
+        
     def getWorldBounds(self):
         if len(self.presentChunks) == 0:
             return BoundingBox( (0,0,0), (0,0,0) )
@@ -1621,6 +1683,53 @@ class MCInfdevOldLevel(MCLevel):
     def __str__(self):
         return "MCInfdevOldLevel(" + os.path.split(self.worldDir)[1] + ")"
     
+    def create(self, filename, random_seed, last_played):
+        
+        if filename == None:
+            raise ValueError, "Can't create an Infinite level without a filename!"
+        #create a new level
+        root_tag = TAG_Compound();
+        root_tag[Data] = TAG_Compound();
+        root_tag[Data][SpawnX] = TAG_Int(0)
+        root_tag[Data][SpawnY] = TAG_Int(2)
+        root_tag[Data][SpawnZ] = TAG_Int(0)
+        
+        if last_played is None:
+            last_played = time.time()
+        if random_seed is None:
+            random_seed = random.random() * ((2<<31))
+
+        root_tag[Data]['LastPlayed'] = TAG_Long(long(last_played))
+        root_tag[Data]['RandomSeed'] = TAG_Long(int(random_seed))
+        root_tag[Data]['SizeOnDisk'] = TAG_Long(long(1048576))
+        root_tag[Data]['Time'] = TAG_Long(1)
+        root_tag[Data]['SnowCovered'] = TAG_Byte(0);
+        
+        ### if singleplayer:
+        root_tag[Data][Player] = TAG_Compound()
+        
+        
+        root_tag[Data][Player]['Air'] = TAG_Short(300);
+        root_tag[Data][Player]['AttackTime'] = TAG_Short(0)
+        root_tag[Data][Player]['DeathTime'] = TAG_Short(0);
+        root_tag[Data][Player]['Fire'] = TAG_Short(-20);
+        root_tag[Data][Player]['Health'] = TAG_Short(20);
+        root_tag[Data][Player]['HurtTime'] = TAG_Short(0);
+        root_tag[Data][Player]['Score'] = TAG_Int(0);
+        root_tag[Data][Player]['FallDistance'] = TAG_Float(0)
+        root_tag[Data][Player]['OnGround'] = TAG_Byte(0)
+
+        root_tag[Data][Player]['Inventory'] = TAG_List()
+
+        root_tag[Data][Player]['Motion'] = TAG_List([TAG_Double(0) for i in range(3)])
+        root_tag[Data][Player]['Pos'] = TAG_List([TAG_Double([0.5,2.8,0.5][i]) for i in range(3)])
+        root_tag[Data][Player]['Rotation'] = TAG_List([TAG_Float(0), TAG_Float(0)])
+        
+        #root_tag["Creator"] = TAG_String("MCEdit-"+release.release);
+        
+        if not os.path.exists(self.worldDir):
+            os.mkdir(self.worldDir)
+        
     def __init__(self, filename = None, create = False, random_seed=None, last_played=None):
         #pass level.dat's root tag and filename to read an existing level.
         #pass only filename to create a new one
@@ -1629,64 +1738,21 @@ class MCInfdevOldLevel(MCLevel):
         self.Width = 0
         self.Height = 128 #subject to change?
         
-        if (not (os.sep in filename)) or (os.path.basename(filename).lower() != "level.dat"): #we've been passed a world subdir by some rascal
+        if os.path.isdir(filename):
             self.worldDir = filename
             filename = os.path.join(filename, "level.dat")
         else:
+            
             self.worldDir = os.path.split(filename)[0]
             
         self._presentChunks = {};
         
-        self.loadedChunks = deque()
-        self.decompressedChunks = set()
+        #used to limit memory usage
+        self.loadedChunks = dequeset()
+        self.decompressedChunks = dequeset()
         
         if create:
-            
-            if filename == None:
-                raise ValueError, "Can't create an Infinite level without a filename!"
-            #create a new level
-            root_tag = TAG_Compound();
-            root_tag[Data] = TAG_Compound();
-            root_tag[Data][SpawnX] = TAG_Int(0)
-            root_tag[Data][SpawnY] = TAG_Int(2)
-            root_tag[Data][SpawnZ] = TAG_Int(0)
-            
-            if last_played is None:
-                last_played = time.time()
-            if random_seed is None:
-                random_seed = random.random() * ((2<<31))
-
-            root_tag[Data]['LastPlayed'] = TAG_Long(long(last_played))
-            root_tag[Data]['RandomSeed'] = TAG_Long(int(random_seed))
-            root_tag[Data]['SizeOnDisk'] = TAG_Long(long(1048576))
-            root_tag[Data]['Time'] = TAG_Long(1)
-            root_tag[Data]['SnowCovered'] = TAG_Byte(0);
-            
-            ### if singleplayer:
-            root_tag[Data][Player] = TAG_Compound()
-            
-            
-            root_tag[Data][Player]['Air'] = TAG_Short(300);
-            root_tag[Data][Player]['AttackTime'] = TAG_Short(0)
-            root_tag[Data][Player]['DeathTime'] = TAG_Short(0);
-            root_tag[Data][Player]['Fire'] = TAG_Short(-20);
-            root_tag[Data][Player]['Health'] = TAG_Short(20);
-            root_tag[Data][Player]['HurtTime'] = TAG_Short(0);
-            root_tag[Data][Player]['Score'] = TAG_Int(0);
-            root_tag[Data][Player]['FallDistance'] = TAG_Float(0)
-            root_tag[Data][Player]['OnGround'] = TAG_Byte(0)
-
-            root_tag[Data][Player]['Inventory'] = TAG_List()
-
-            root_tag[Data][Player]['Motion'] = TAG_List([TAG_Double(0) for i in range(3)])
-            root_tag[Data][Player]['Pos'] = TAG_List([TAG_Double([0.5,2.8,0.5][i]) for i in range(3)])
-            root_tag[Data][Player]['Rotation'] = TAG_List([TAG_Float(0), TAG_Float(0)])
-            
-            #root_tag["Creator"] = TAG_String("MCEdit-"+release.release);
-            
-            if not os.path.exists(self.worldDir):
-                os.mkdir(self.worldDir)
-        
+            self.create(filename, random_seed, last_played);
         else:
             root_tag = nbt.load(filename)
          
@@ -1695,7 +1761,6 @@ class MCInfdevOldLevel(MCLevel):
         
         if create:
             self.saveInPlace();
-        
         
         self.dirhashes = [self.dirhash(n) for n in range(64)];
         self.dirhash=self.dirhashlookup;
@@ -1753,13 +1818,13 @@ class MCInfdevOldLevel(MCLevel):
     
     decompressedChunkLimit = 204800 # about 320 megabytes
     compressedChunkLimit = 8192 # from 8mb to 800mb depending on chunk contents
-            
     
+            
     def chunkDidCompress(self, chunk):
          #searching decompressedChunks every time is slow, especially with the above limits
         try:
-            self.decompressedChunks.remove(chunk)
-        except KeyError:
+            self.decompressedChunks.discard(chunk)
+        except ValueError:
             pass
     
     def chunkDidDecompress(self, chunk):
@@ -1771,7 +1836,7 @@ class MCInfdevOldLevel(MCLevel):
     
     def chunkDidUnload(self, chunk):
         try:
-            self.loadedChunks.remove(chunk)
+            self.loadedChunks.discard(chunk)
         except ValueError:
             pass
     
@@ -2710,6 +2775,11 @@ class MCIndevLevel(MCLevel):
     
     def __repr__(self):
         return u"MCIndevLevel({0}): {1}W {2}L {3}H".format(self.filename, self.Width, self.Length, self.Height)
+        
+    @classmethod
+    def _isTagLevel(cls, root_tag):
+        return "MinecraftLevel" == root_tag.name
+           
     def __init__(self, root_tag = None, filename = ""):
         self.Width = 0
         self.Height = 0
@@ -2931,7 +3001,14 @@ class MCJavaLevel(MCLevel):
             Height = 256
         return (Width, Length, Height)
         
-    def __init__(self, data, filename):
+    @classmethod
+    def _isDataLevel(cls, data):
+        return (data[0] == 0x27 and
+                data[1] == 0x1B and
+                data[2] == 0xb7 and
+                data[3] == 0x88)
+            
+    def __init__(self, filename, data):
         self.filename = filename;
         self.filedata = data;
         #try to take x,z,y from the filename
