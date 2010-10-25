@@ -1370,7 +1370,7 @@ class InfdevChunk(MCLevel):
     def decompress(self):
         if not self in self.world.decompressedChunks:
             MCLevel.decompress(self);
-            self.world.decompressedChunks.add(self);
+            self.world.chunkDidDecompress(self);
         
         
     def __str__(self):
@@ -1829,9 +1829,9 @@ class MCInfdevOldLevel(MCLevel):
     
     def chunkDidDecompress(self, chunk):
         if not chunk in self.decompressedChunks:
-            self.decompressedChunks.add(chunk);
+            self.decompressedChunks.append(chunk);
             if len(self.decompressedChunks) > self.decompressedChunkLimit:
-                oldestChunk = self.decompressedChunks.pop();
+                oldestChunk = self.decompressedChunks[0];
                 oldestChunk.compress(); #calls chunkDidCompress
     
     def chunkDidUnload(self, chunk):
