@@ -852,7 +852,7 @@ class mce(object):
      ).lower() in ("yes", "y", "1", "true"):
             from PIL import Image
             import datetime
-            import threading, Queue
+            import threading, Queue, multiprocessing
 
             filename = command.pop(0)
 
@@ -900,7 +900,7 @@ class mce(object):
                     c = self.level.getChunk(cx,cy)
                     work_queue.put((cx,cy))
 
-            for foo in [1,2]:
+            for foo in range(1,multiprocessing.cpu_count()):
                 threading.Thread(target=populate_chunk).start()
             
             sys.setcheckinterval(10000)
