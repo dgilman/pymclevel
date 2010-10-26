@@ -1372,8 +1372,9 @@ class InfdevChunk(MCLevel):
         self.world.chunkDidCompress(self);
     
     def decompress(self):
-        MCLevel.decompress(self);
-        self.world.chunkDidDecompress(self);
+        if not self in self.world.decompressedChunks:
+            MCLevel.decompress(self);
+            self.world.chunkDidDecompress(self);
         
         
     def __str__(self):
